@@ -1,208 +1,306 @@
-# Security Monitoring Infrastructure Deployment Guide
+# Ransomware Detection and Response Infrastructure
 
-This guide provides step-by-step instructions for deploying a complete security monitoring infrastructure using ELK Stack, Wazuh Manager, and Windows agents.
+## Project Overview
+
+This project demonstrates the design and deployment of a comprehensive security monitoring infrastructure to detect and respond to ransomware threats using endpoint telemetry. Built as a graduate-level capstone project, it showcases enterprise-grade security architecture, infrastructure automation, and threat detection capabilities in a realistic financial services scenario.
+
+## Fictional Scenario: IronLock Financial
+
+**IronLock Financial** is a mid-sized digital banking and investment services firm that has become increasingly vulnerable to ransomware attacks due to:
+
+- **Expanded Remote Work**: Post-pandemic shift to cloud-hosted infrastructure and remote access
+- **High-Value Targets**: Sensitive financial data including client records and transaction logs
+- **Limited Visibility**: Lack of fine-grained endpoint telemetry and behavioral monitoring
+- **Detection Gaps**: Traditional antivirus solutions insufficient for modern ransomware techniques
+
+### The Security Challenge
+
+IronLock Financial currently lacks visibility into pre-encryption behaviors such as:
+- File renaming patterns
+- Process injection techniques
+- Unauthorized registry modifications
+- Anomalous process trees and DLL injection
+
+Without enhanced behavioral monitoring, ransomware attacks may remain undetected until data is already encrypted and systems are inoperable, causing severe business disruption and eroding client trust.
+
+## Solution Architecture
+
+This project implements a telemetry-driven detection and response solution using open-source tools and AWS infrastructure:
+
+### Core Components
+- **ELK Stack Server** – Elasticsearch and Kibana for centralized data storage and visualization
+- **Wazuh Manager** – SIEM functions including log aggregation, threat detection, and agent coordination
+- **Windows Endpoints** – Monitored systems with Sysmon for detailed endpoint telemetry
+- **Bastion Host** – Secure access point for infrastructure management
+
+### Technical Skills Demonstrated
+- **Infrastructure as Code**: Terraform for automated, repeatable deployments
+- **Cloud Architecture**: Secure, segmented AWS VPC design with proper network isolation
+- **Security Hardening**: Zero public IP architecture with SSM-based access
+- **SIEM Architecture**: Understanding of security monitoring fundamentals transferable across cloud providers
+- **Automation**: Bash and PowerShell scripts for service installation and configuration
+- **Incident Response**: NIST-aligned procedures and custom detection rules
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    IronLock Financial                       │
+│                   AWS VPC (10.2.0.0/24)                   │
+├─────────────────────────────────────────────────────────────┤
+│  Public Subnet (10.2.0.0/26)        │  Private Subnet      │
+│  ┌─────────────────────┐            │  (10.2.0.64/26)     │
+│  │   Bastion Host      │            │  ┌─────────────────┐ │
+│  │   (Windows)         │            │  │ Windows         │ │
+│  │   RDP Access        │◄───────────┼──┤ Endpoint        │ │
+│  └─────────────────────┘            │  │ + Sysmon        │ │
+│                                     │  │ + Wazuh Agent   │ │
+│                                     │  └─────────────────┘ │
+├─────────────────────────────────────┼─────────────────────┤
+│  Monitoring Subnet (10.2.0.128/26) │                     │
+│  ┌─────────────────────┐            │                     │
+│  │   Wazuh Manager     │            │                     │
+│  │   + Filebeat        │            │                     │
+│  └─────────────────────┘            │                     │
+│  ┌─────────────────────┐            │                     │
+│  │   ELK Stack         │            │                     │
+│  │   + Elasticsearch   │            │                     │
+│  │   + Kibana          │            │                     │
+│  └─────────────────────┘            │                     │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## Prerequisites
 
-- AWS CLI configured with appropriate credentials and region
-- Terraform used to deploy infrastructure into a segmented, VPC-contained environment
-- Access to AWS SSM for instance management
+- AWS CLI configured with appropriate credentials
+- Terraform >= 1.0
+- Basic understanding of networking and security concepts
 
-## Architecture Overview
+## Quick Start
 
-The deployment consists of three main components:
-1. **ELK Stack Server** – Elasticsearch and Kibana for data storage and visualization
-2. **Wazuh Manager** – Centralized log aggregation, threat detection, and agent coordination (SIEM functions)
-3. **Windows Agent(s)** – Monitors endpoint activity using Sysmon and forwards logs to Wazuh for analysis
+### 1. Infrastructure Deployment
 
-## Deployment Steps
+```bash
+# Clone the repository
+git clone https://github.com/Jodi-321/potential-pancake.git
+cd potential-pancake
 
-### Step 1: Deploy ELK Server
+# Deploy infrastructure
+terraform init
+terraform plan
+terraform apply
+```
 
-1. Launch EC2 instance with ELK installation script in user data  
-2. Wait for installation to complete (approximately 10–15 minutes)  
-3. Verify ELK stack functionality:
+### 2. Required Variables
 
-    ```bash
-    # SSH into ELK server
-    aws ssm start-session --target ELK_INSTANCE_ID
+Create a `terraform.tfvars` file with the following values:
 
-    # Test Elasticsearch
-    curl http://localhost:9200
+```hcl
+# terraform.tfvars
+project_name     = "ironlock-security"  # Customize as needed
+wazuh_ami_id     = "ami-xxxxxxxxx"      # Amazon Linux 2 AMI
+elk_ami_id       = "ami-xxxxxxxxx"      # Ubuntu 20.04 AMI  
+windows_ami_id   = "ami-xxxxxxxxx"      # Windows Server 2019/2022 AMI
+my_public_ip_id  = "x.x.x.x/32"        # Your public IP for RDP access
+```
 
-    # Test Kibana
-    curl -I http://localhost:5601
-    # Expected response: HTTP/1.1 302 Found (redirect to Kibana interface)
-    ```
+### 3. Automated Installation Scripts
 
-### Step 2: Deploy Wazuh Manager
+The Terraform deployment includes three user data scripts that automatically install and configure the security monitoring components:
 
-1. Launch EC2 instance with Wazuh installation script  
-2. Wait for installation to complete (approximately 10–15 minutes)  
-3. Connect to Wazuh Manager:
+#### **install-elk.sh** (ELK Stack Server)
+This bash script runs on Ubuntu and performs the following actions:
+- **Java Installation**: Installs OpenJDK 11 (required for Elasticsearch)
+- **Repository Setup**: Adds Wazuh repository and GPG keys for package management
+- **Elasticsearch Installation**: 
+  - Installs open-source Elasticsearch
+  - Creates data and log directories with proper permissions
+  - Configures cluster settings (wazuh-cluster, single node)
+  - Sets network binding to accept connections from VPC
+- **Kibana Installation**:
+  - Installs Open Distro Kibana
+  - Removes security plugins for simplified access
+  - Configures localhost-only access (requires port forwarding)
+  - Connects to local Elasticsearch instance
+- **Service Management**: Enables and starts both services automatically
+- **Logging**: All installation output logged to `/var/log/install-elk.log`
 
-    ```bash
-    aws ssm start-session --target WAZUH_MANAGER_INSTANCE_ID
-    ```
+#### **install-wazuh.sh** (Wazuh Manager)
+This bash script runs on Amazon Linux 2 and performs:
+- **System Updates**: Updates all packages to latest versions
+- **Wazuh Repository**: Adds official Wazuh repository and GPG verification
+- **Wazuh Manager Installation**: Installs and starts the core Wazuh manager service
+- **Filebeat Preparation**: Creates a configuration script for later manual execution
+  - Script templates Filebeat configuration for log forwarding
+  - Requires manual IP address configuration (ELK server IP)
+  - Configures JSON log parsing from `/var/ossec/logs/alerts/alerts.json`
+  - Sets up Elasticsearch output for centralized log storage
+- **Service Verification**: Confirms Wazuh manager is running properly
 
-4. Configure Filebeat integration:
+#### **install-windows-agent2.ps1** (Windows Endpoints)
+This PowerShell script runs on Windows Server instances and installs:
+- **Sysmon Installation**:
+  - Downloads Microsoft Sysmon from official source
+  - Applies SwiftOnSecurity configuration for comprehensive logging
+  - Enables detailed process, network, and file system monitoring
+  - Captures process creation, network connections, file modifications
+- **Wazuh Agent Installation**:
+  - Downloads and silently installs Wazuh agent MSI package
+  - Creates desktop configuration script for manual IP setup
+  - Configures agent to forward Windows Event Log and Sysmon data
+- **Configuration Management**:
+  - Generates `configure-wazuh.ps1` script on Administrator desktop
+  - Requires manual Wazuh Manager IP configuration
+  - Handles agent registration and service startup
+- **Error Handling**: Comprehensive logging and error reporting throughout installation
 
-    ```bash
-    # Edit the Filebeat configuration script
-    sudo nano /root/configure-filebeat.sh
-    # Change: ELK_IP="REPLACE_ME" 
-    # To: ELK_IP="10.2.0.XXX" (your ELK server private IP)
+### 4. Post-Deployment Configuration
 
-    # Execute the configuration script
-    sudo /root/configure-filebeat.sh
-    ```
+After Terraform completes the infrastructure deployment (approximately 45-60 minutes), follow these steps to complete the security monitoring setup:
 
-5. Verify Wazuh services:
+#### Step 1: Configure Wazuh-ELK Integration
 
-    ```bash
-    sudo systemctl status wazuh-manager
-    sudo /var/ossec/bin/wazuh-control status
-    ```
+1. **Get ELK Server IP Address**:
+```bash
+# Retrieve instance details
+aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=*elk*" "Name=instance-state-name,Values=running" \
+    --query "Reservations[*].Instances[*].[InstanceId,PrivateIpAddress,Tags[?Key=='Name'].Value|[0]]" \
+    --output table
+```
 
-### Step 3: Deploy Windows Agent(s)
+2. **Configure Filebeat on Wazuh Manager**:
+```bash
+# Connect to Wazuh Manager
+aws ssm start-session --target WAZUH_INSTANCE_ID
 
-1. Launch Windows EC2 instance with Wazuh agent installation script  
-2. Wait for installation to complete (approximately 5–10 minutes)  
-3. Connect via SSM:
+# Edit configuration script with ELK IP
+sudo nano /root/configure-filebeat.sh
+# Change: ELK_IP="REPLACE_ME" 
+# To: ELK_IP="10.2.0.XXX" (your ELK server private IP)
 
-    ```bash
-    aws ssm start-session --target WINDOWS_INSTANCE_ID
-    ```
+# Execute configuration
+sudo /root/configure-filebeat.sh
 
-4. Configure the agent:
+# Verify services
+sudo systemctl status wazuh-manager filebeat
+```
 
-    ```powershell
-    # Update the configuration script with Wazuh Manager IP
-    (Get-Content "C:\Users\Administrator\Desktop\configure-wazuh.ps1") -replace "ManagerIP = 'REPLACE_ME'", "ManagerIP = '10.2.0.XXX'" | Set-Content "C:\Users\Administrator\Desktop\configure-wazuh.ps1"
+#### Step 2: Configure Windows Agent
 
-    # Execute the configuration script
-    .\configure-wazuh.ps1
-    ```
+1. **Connect to Windows Endpoint**:
+```bash
+aws ssm start-session --target WINDOWS_INSTANCE_ID
+```
 
-5. Verify services:
+2. **Configure Wazuh Agent**:
+```powershell
+# Navigate to desktop and edit configuration script
+cd C:\Users\Administrator\Desktop
+notepad configure-wazuh.ps1
 
-    ```powershell
-    Get-Service -Name "WazuhSvc"
-    Get-Service -Name "Sysmon64"
-    ```
+# Replace 'REPLACE_ME' with Wazuh Manager IP (10.2.0.XXX)
+# Save and execute
+.\configure-wazuh.ps1
 
-### Step 4: Verify End-to-End Data Flow
+# Verify services
+Get-Service -Name "WazuhSvc","Sysmon64"
+```
 
-1. Retrieve ELK instance metadata (useful if IP not known from Terraform outputs):
+#### Step 3: Access Kibana Dashboard
 
-    ```bash
-    aws ec2 describe-instances \
-        --filters "Name=instance-state-name,Values=running" \
-        --query "Reservations[*].Instances[*].[InstanceId,Tags[?Key=='Name'].Value|[0],InstanceType,PrivateIpAddress]" \
-        --output table \
-        --region REGION \
-        --profile PROFILE_NAME
-    ```
+1. **Set up port forwarding**:
+```bash
+aws ssm start-session \
+    --target ELK_INSTANCE_ID \
+    --document-name AWS-StartPortForwardingSession \
+    --parameters '{"portNumber":["5601"],"localPortNumber":["5601"]}'
+```
 
-2. Establish port forwarding to access Kibana:
+2. **Access Kibana**: Open browser to `http://localhost:5601`
 
-    ```bash
-    aws ssm start-session \
-        --target ELK_INSTANCE_ID \
-        --document-name AWS-StartPortForwardingSession \
-        --parameters '{"portNumber":["5601"],"localPortNumber":["5601"]}' \
-        --region REGION \
-        --profile PROFILE_NAME
-    ```
+3. **Verify data flow**:
+   - Navigate to "Stack Management" → "Index Management"
+   - Look for indices with "wazuh-*" prefix
+   - Use "Discover" to view security events
 
-3. Access Kibana interface:
+#### Step 4: Generate Test Events
 
-   - Open browser and navigate to: `http://localhost:5601`
+Create test activities on the Windows endpoint to verify monitoring:
 
-4. Verify data ingestion in Kibana:
+```powershell
+# File operations
+New-Item -Path "C:\temp\test.txt" -ItemType File
+Remove-Item -Path "C:\temp\test.txt"
 
-   - Navigate to "Stack Management" → "Index Management"  
-   - Look for indices with "wazuh-*" prefix  
-   - Use "Discover" feature to search and analyze security data
+# Process execution
+Get-Process
+Start-Process notepad
 
-5. Confirm agent connectivity:
+# Registry operations  
+New-Item -Path "HKCU:\Software\TestKey"
+Remove-Item -Path "HKCU:\Software\TestKey"
+```
 
-    ```bash
-    sudo /var/ossec/bin/agent_control -l
-    # Should display connected Windows agent with "Active" status
-    ```
+## Verification Checklist
 
-6. Generate test events:
-
-   - Create/delete files on Windows system  
-   - Execute various commands to generate Sysmon events  
-   - Verify events appear in Kibana Discover
+- [ ] **ELK Server**: Kibana accessible via port forwarding
+- [ ] **Wazuh Manager**: Agent connectivity confirmed (`sudo /var/ossec/bin/agent_control -l`)
+- [ ] **Windows Agent**: Wazuh and Sysmon services running
+- [ ] **Data Flow**: Wazuh indices visible in Elasticsearch
+- [ ] **Events**: Test activities appear in Kibana Discover
 
 ## Troubleshooting
 
-### No Data Appearing in Kibana
-
-Check Filebeat service status:
-
+### No Data in Kibana
 ```bash
-# On Wazuh Manager
+# Check Filebeat status
 sudo systemctl status filebeat
 sudo journalctl -u filebeat -f
 
-# Check Filebeat logs for output errors
-sudo cat /var/log/filebeat/filebeat.log | grep ERROR
-
-# Verify data transmission to Elasticsearch
-curl "http://ELK_SERVER_IP:9200/_cat/indices?v" | grep wazuh
+# Verify Elasticsearch connectivity
+curl "http://ELK_IP:9200/_cat/indices?v" | grep wazuh
 ```
 
-### Windows Agent Connection Issues
-
-Monitor agent logs:
-
+### Windows Agent Issues
 ```powershell
-# On Windows system
+# Check agent logs
 Get-Content "C:\Program Files (x86)\ossec-agent\ossec.log" -Tail 20
+
+# Restart services if needed
+Restart-Service WazuhSvc
 ```
 
-Check Wazuh Manager logs:
+## Project Outcomes
 
-```bash
-# On Wazuh Manager
-sudo tail -f /var/ossec/logs/ossec.log | grep "agent"
-```
+This infrastructure enables:
 
-## Success Criteria
-
-Deployment is successful when the following conditions are met:
-
-- **ELK Server**: Kibana accessible via SSM-based port forwarding, no auth required due to local-only access  
-- **Wazuh Manager**: Connected agents visible in agent list  
-- **Windows Agent**: Wazuh and Sysmon services running with "Active" status  
-- **Data Flow**: Wazuh indices present in Elasticsearch  
-- **Visualization**: Security events visible in Kibana Discover interface  
-
-## Timeline Estimates
-
-| Component               | Estimated Time                                   |
-| ----------------------- | ------------------------------------------------ |
-| ELK Server              | 10–15 minutes                                    |
-| Wazuh Manager           | 15–20 minutes (including Filebeat configuration) |
-| Windows Agent           | 5–10 minutes per agent                           |
-| End-to-end verification | 5–10 minutes                                     |
-| **Total**               | **45–60 minutes**                                |
+1. **Enhanced Threat Detection**: Real-time visibility into endpoint behaviors
+2. **Incident Response**: Centralized logging and alerting capabilities  
+3. **Compliance**: Audit trails and security event correlation
+4. **Scalability**: Terraform automation for repeatable deployments
+5. **Skills Development**: Hands-on experience with enterprise security tools
 
 ## Security Considerations
 
-- Ensure components are deployed in isolated subnets with restricted security groups and no public IPs  
-- Verify security group configurations allow only necessary traffic  
-- Port forwarding through AWS SSM Session Manager is required to access Kibana from your local machine  
-- Monitor for successful agent registration and data flow  
-- Regularly review security events and alerts in Kibana  
+- All monitoring infrastructure deployed in private subnets with no public IP addresses
+- Network segmentation with restrictive security groups
+- Access only through AWS SSM Session Manager
+- Encrypted data transmission between components
+- Principle of least privilege for all IAM roles
 
-## Additional Notes
+## Project Context
 
-- All components should be deployed in the same VPC for optimal connectivity  
-- Private IP addresses are used for internal communication  
-- Port forwarding is required to access Kibana from external networks  
-- Default credentials are not required for the OSS ELK stack configuration
+This project was developed as a graduate-level capstone to demonstrate:
+
+- **Infrastructure Automation**: Professional-grade Terraform skills
+- **Security Architecture**: Understanding of defense-in-depth principles  
+- **Cloud Engineering**: Secure, scalable AWS infrastructure design
+- **SIEM Operations**: Practical experience with security monitoring tools
+- **Scripting Proficiency**: Automation capabilities in multiple languages
+
+The skills and architecture patterns demonstrated are transferable across cloud providers (AWS, Azure, GCP) and applicable to real-world enterprise security operations.
+
+---
+
+**Disclaimer**: This is a simulated environment for educational purposes. IronLock Financial is a fictional company created to provide realistic context for cybersecurity learning and demonstration.
